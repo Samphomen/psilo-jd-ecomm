@@ -38,9 +38,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'django_countries',
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
+    'crispy_forms',
+    'crispy_bootstrap4',
     'core'
 ]
 
@@ -123,6 +126,8 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static_in_env')]
 STATIC_ROOT = os.path.join(BASE_DIR, 'static_root')
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media_root')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field
@@ -140,3 +145,12 @@ AUTHENTICATION_BACKENDS = (
 )
 
 SITE_ID = 1
+LOGIN_REDIRECT_URL = '/'
+
+# CRIPSY FORMS
+
+CRISPY_TEMPLATE_PACK = 'bootstrap4'
+
+STRIPE_SECRET_KEY = "sk_test_4eC39HqLyjWDarjtT1zdp7dc"
+
+STRIPE_PUBLIC_KEY = "pk_test_TYooMQauvdEDq54NiTphI7jx"
