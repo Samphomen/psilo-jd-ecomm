@@ -1,13 +1,15 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, View
-from .models import Item, Order, OrderItem, BillingAddress, Payment, Coupon
+from .models import Item, Order, OrderItem, Address, Payment, Coupon, Refund
 from django.conf import settings
-from .forms import CheckoutForm
+from .forms import CheckoutForm, CouponForm, RefundForm
 from django.utils import timezone
 from django.contrib import messages
 from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+import random
+import string
 
 # Create your views here.
 import stripe
@@ -21,6 +23,10 @@ def products(request):
     }
     return render(request, "products.html", context)
 
+def create_ref_code():
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
+
+
 class CheckoutView(View):
     def get(self, *args, **kwargs):
         #form
@@ -29,7 +35,9 @@ class CheckoutView(View):
             order = Order.objects.get(user=self.request.user, ordered=False)
             context = {
                 'form': form,
-                "order": order
+                'couponform': CouponForm(),
+                "order": order,
+                'DISPLAY_COUPON_FORM': True
             }
             return render(self.request, 'checkout.html', context)
         except ObjectDoesNotExist:
@@ -49,12 +57,13 @@ class CheckoutView(View):
                 # same_billing_address = form.cleaned_data.get('same_billing_address')
                 # save_info = form.cleaned_data.get('save_info')
                 payment_option = form.cleaned_data.get('payment_option')
-                billing_address = BillingAddress(
+                billing_address = Address(
                     user = self.request.user,
                     street_address = street_address,
                     apartment_address = apartment_address,
                     country = billing_country,
-                    zip = zip
+                    zip = zip,
+                    address_type = 'B'
                 )
                 billing_address.save()
                 order.billing_address = billing_address
@@ -68,7 +77,7 @@ class CheckoutView(View):
                     messages.warning(self.request, "Invalid Payment Option Selected")
                     return redirect('core:checkout')         
         except ObjectDoesNotExist:
-            messages.error(self.request, "You do not have an active order")
+            messages.warning(self.request, "You do not have an active order")
             return redirect("core:order-summary")
         
 
@@ -76,10 +85,15 @@ class PaymentView(View):
     def get(self, *args, **kwargs):
         #order
         order = Order.objects.get(user=self.request.user, ordered=False)
-        context = {
-            "order": order
-        }
-        return render(self.request, "payment.html", context)
+        if order.billing_address:
+            context = {
+                "order": order,
+                'DISPLAY_COUPON_FORM': False
+            }
+            return render(self.request, "payment.html", context)
+        else:
+            messages.warning(self.request, "You have not added a billing address")
+            return redirect("core:checkout")
     
     def post(self, *args, **kwargs):
         order = Order.objects.get(user=self.request.user, ordered=False)
@@ -108,6 +122,7 @@ class PaymentView(View):
 
             order.ordered = True
             order.payment = payment
+            order.ref_code = create_ref_code()
             order.save()
 
             messages.success(self.request, "Your order was successful")
@@ -170,7 +185,7 @@ class OrderSummaryView(LoginRequiredMixin, View):
             }
             return render(self.request, 'order-summary.html', context)
         except ObjectDoesNotExist:
-            messages.error(self.request, "You do not have an active order")
+            messages.warning(self.request, "You do not have an active order")
             return redirect("/")
 
         
@@ -267,19 +282,51 @@ def get_coupon(request, code):
         return redirect("core:checkout")
 
 
-def add_coupon(request, code):
-    try:
-        order = Order.objects.filter(
-            user=request.user,
-            ordered = False
-        ) 
-        order.coupon = get_coupon(request, code)
-        order.save()
-        messages.success(request, "Successfully added coupon")
-        return redirect("core:checkout")
-    
-    #if coupon has been used by user and how many times
+class AddCouponView(View):
+    def post(self, *args, **kwargs):
+        form = CouponForm(self.request.POST or None)
+        if form.is_valid():
+            try:
+                code = form.cleaned_data.get('code')
+                order = Order.objects.get(
+                    user=self.request.user, ordered=False)
+                order.coupon = get_coupon(self.request, code)
+                order.save()
+                messages.success(self.request, "Successfully added coupon")
+                return redirect("core:checkout")
+            except ObjectDoesNotExist:
+                messages.info(self.request, "You do not have an active order")
+                return redirect("core:checkout")
+            
 
-    except ObjectDoesNotExist:
-        messages.info(request, "You do not have an active order")
-        return redirect("core:checkout")
+class RequestRefundView(View):
+    def get(self, *args, **kwargs):
+        form = RefundForm(self.request.POST)
+        context = {
+            "form": form
+        }
+        return render(self.request, "request_refund.html", context)
+
+    def post(self, *args, **kwargs):
+        form = RefundForm(self.request.POST)
+        if form.is_valid():
+            ref_code = form.cleaned_data.get('ref_code')
+            message = form.cleaned_data.get('message')
+            email = form.cleaned_data.get('email')
+            # edit the order
+            try:
+                order = Order.objects.get(ref_code=ref_code)
+                order.refund_requested = True
+                order.save()
+                # store the refund
+                refund = Refund()
+                refund.order = order
+                refund.reason = message
+                refund.email = email
+                refund.save()
+                messages.info(self.request, "Your request was received")
+                return redirect("core:request-refund")
+            except ObjectDoesNotExist:
+                messages.info(self.request, "This order does not exist.")
+                return redirect("core:request-refund")
+
